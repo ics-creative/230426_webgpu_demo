@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ja" dir="ltr">
+
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="author" content="株式会社ICS"/>
+  <meta name="google" content="notranslate"/>
+  <title>WebGPU Compute Bitonic Sort | ICS</title>
+  <script type="module" src="script.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: white;
+      overflow: hidden;
+      font-family: sans-serif;
+    }
+
+    div#contents {
+      background-color: rgb(231, 231, 231);
+      padding: 20px;
+      display: none
+    }
+
+    #notSupportedDescription {
+      display: none
+    }
+  </style>
+</head>
+
+<body>
+<div id="container">
+  <p id="notSupportedDescription">※このデモはWebGPUで作成しています。<a href="https://caniuse.com/#feat=webgpu" target="_blank">WebGPUに対応したブラウザ</a>でご覧ください。
+  </p>
+  <div id="contents">
+    <h1>WebGPUのコンピュートシェーダーを使用したバイトニックソートの実行デモ</h1>
+    <p>選択した要素数の配列をCPUとGPUでそれぞれソートし、実行時間を比較します。</p>
+    <label for="selectBox">要素数：</label>
+    <select id="selectBox"></select>
+    <div id="log">
+    </div>
+  </div>
+</div>
+</body>
+
+</html>
