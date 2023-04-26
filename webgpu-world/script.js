@@ -32,8 +32,11 @@ async function init() {
   const device = await adapter?.requestDevice({});
 
   const canvas = document.getElementById('myCanvas');
-  canvas.width = canvas.style.width = innerWidth;
-  canvas.height = canvas.style.height = innerHeight;
+  canvas.width = Math.floor(innerWidth * devicePixelRatio);
+  canvas.height = Math.floor(innerHeight * devicePixelRatio);
+  canvas.style.width = innerWidth + "px";
+  canvas.style.height = innerHeight + "px";
+
   const context = canvas.getContext('webgpu');
 
   if (!adapter || !device || !context) {
@@ -415,8 +418,10 @@ async function init() {
 
   const onResize = () => {
     camera.aspect = innerWidth / innerHeight;
-    canvas.width = canvas.style.width = innerWidth;
-    canvas.height = canvas.style.height = innerHeight;
+    canvas.width = Math.floor(innerWidth * devicePixelRatio);
+    canvas.height = Math.floor(innerHeight * devicePixelRatio);
+    canvas.style.width = innerWidth + "px";
+    canvas.style.height = innerHeight + "px";
     depthTexture.destroy();
     depthTexture = createDepthTexture();
     renderPassDescriptor.depthStencilAttachment.view = depthTexture.createView();

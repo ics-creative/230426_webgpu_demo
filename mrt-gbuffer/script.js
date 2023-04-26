@@ -46,8 +46,10 @@ async function init() {
   const device = await adapter?.requestDevice({});
 
   const canvas = document.getElementById("myCanvas");
-  canvas.width = canvas.style.width = innerWidth;
-  canvas.height = canvas.style.height = innerHeight;
+  canvas.width = innerWidth;
+  canvas.height = innerHeight;
+  canvas.style.width = innerWidth + "px";
+  canvas.style.height = innerHeight + "px";
   const context = canvas.getContext("webgpu");
 
   if (!adapter || !device || !context) {
@@ -147,8 +149,10 @@ async function init() {
     const w = innerWidth;
     const h = innerHeight;
     camera.aspect = w / h;
-    canvas.width = canvas.style.width = w;
-    canvas.height = canvas.style.height = h;
+    canvas.width = w;
+    canvas.height = h;
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
 
     resizeCommonUniform(w, h);
 
