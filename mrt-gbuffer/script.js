@@ -183,7 +183,8 @@ async function init() {
     const timeElapsed = timeStamp - previousTimeStamp;
     previousTimeStamp = timeStamp;
     // 元コードが60FPSを前提としたアニメーション値だったので、実際の経過時間から（60FPS換算で）何フレーム分進んだかを計算
-    frameCount += timeElapsed * 60 / 1000;
+    const frameElapsed = timeElapsed * 60 / 1000;
+    frameCount += frameElapsed;
     cameraController.update(0.1);
     commonUniforms.bufferData.set(camera.getCameraMtx(), 0);
     mat4.invert(inverseVPMatrix, camera.getCameraMtx());
@@ -195,7 +196,7 @@ async function init() {
       for (let i = 0; i < torus.num; i++) {
         const transform = torus.transformList[i];
         const rotation = torus.rotationList[i];
-        rotation.angle += rotation.speed;
+        rotation.angle += rotation.speed * frameElapsed;
         quat.setAxisAngle(transform.quaternion, rotation.axis, rotation.angle);
         transform.dirty = true;
         torus.uniform.bufferData.set(transform.getModelMatrix(), torus.uniform.dynamicElements * i);
