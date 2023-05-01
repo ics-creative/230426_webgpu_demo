@@ -22,7 +22,8 @@ export const GPUTextureFormat = {
   bgra8unorm: "bgra8unorm",
   rgba16float: "rgba16float",
   depth24plus: "depth24plus",
-  depth24plus_stencil8: "depth24plus-stencil8"
+  depth24plus_stencil8: "depth24plus-stencil8",
+  depth32float: "depth32float"
 };
 export const GPUAddressMode = {
   clamp_to_edge: "clamp-to-edge",

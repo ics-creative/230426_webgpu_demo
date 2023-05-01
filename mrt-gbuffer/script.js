@@ -572,7 +572,7 @@ async function createRenderTarget(device, swapChainFormat, width, height) {
   const resize = (w, h) => {
     resizeTexture(diffuseTexture, swapChainFormat, w, h);
     resizeTexture(normalTexture, GPUTextureFormat.rgba16float, w, h);
-    resizeTexture(depthTexture, GPUTextureFormat.depth24plus, w, h);
+    resizeTexture(depthTexture, GPUTextureFormat.depth32float, w, h);
   };
   resize(width, height);
 
@@ -869,7 +869,7 @@ async function createGeometryPass(device, swapChainFormat, width, height, render
     depthStencil: {
       depthWriteEnabled: true,
       depthCompare: GPUCompareFunction.less_equal,
-      format: GPUTextureFormat.depth24plus
+      format: GPUTextureFormat.depth32float
     }
   };
   const pipeline = device.createRenderPipeline(gpuRenderPipelineDescriptor);
