@@ -91,10 +91,10 @@ async function init() {
   };
   resizeCommonUniform(canvas.width, canvas.height);
 
-  const geometryPass = await createGeometryPass(device, swapChainFormat, canvas.width, canvas.height, renderTarget.textureList, commonUniforms);
+  const geometryPass = await createGeometryPass(device, swapChainFormat, canvas.width, canvas.height, renderTarget, commonUniforms);
   const ambientLightingPass = await createAmbientLightingPass(device, swapChainFormat, renderTarget, renderScreenVertex);
   const pointLightingPass = await createPointLightingPass(device, swapChainFormat, commonUniforms, renderTarget);
-  const lightHelperPass = await createLightHelperPass(device, swapChainFormat, renderTarget.textureList[3], commonUniforms);
+  const lightHelperPass = await createLightHelperPass(device, swapChainFormat, renderTarget.depthTexture, commonUniforms);
   const renderGBufferPass = await createRenderGBufferPass(device, swapChainFormat, renderTarget, commonUniforms, renderScreenVertex);
 
   const initialLightNum = 20;
@@ -155,14 +155,12 @@ async function init() {
     canvas.style.height = h + "px";
 
     resizeCommonUniform(w, h);
-
-    renderTarget.resizeTextureList(w, h);
-    geometryPass.resizeDepthTexture(w, h);
-    geometryPass.renderPassDescriptor.colorAttachments.forEach((colorAttachment, i) => {
-      colorAttachment.view = renderTarget.textureList[i].createView();
-    });
+    renderTarget.resize(w, h);
+    geometryPass.renderPassDescriptor.colorAttachments[0].view = renderTarget.diffuseTexture.view;
+    geometryPass.renderPassDescriptor.colorAttachments[1].view = renderTarget.normalTexture.view;
+    geometryPass.renderPassDescriptor.depthStencilAttachment.view = renderTarget.depthTexture.view;
     renderTarget.uniformBindGroup = renderTarget.createUniformBindGroup();
-    lightHelperPass.textureUniformsBindGroup = lightHelperPass.createTextureUniformsBindGroup(renderTarget.textureList[3]);
+    lightHelperPass.textureUniformsBindGroup = lightHelperPass.createTextureUniformsBindGroup(renderTarget.depthTexture);
   };
 
   let resizeTimer;
@@ -525,30 +523,58 @@ async function createRenderTarget(device, swapChainFormat, width, height) {
   @group(${group}) @binding(1) var nonFilteringSampler: sampler;
   @group(${group}) @binding(2) var diffuseTexture: texture_2d<f32>;
   @group(${group}) @binding(3) var normalTexture: texture_2d<f32>;
-  @group(${group}) @binding(4) var positionTexture: texture_2d<f32>;
-  @group(${group}) @binding(5) var depthTexture: texture_2d<f32>;
+  @group(${group}) @binding(4) var depthTexture: texture_2d<f32>;
+
+  fn reconstructWorldSpacePositionFromDepth(
+    depthValue: f32,
+    uv: vec2<f32>,
+    inverseViewProjectionMatrix: mat4x4<f32>
+  ) -> vec3<f32> {
+    var screenSpacePositionXY:vec2<f32> = uv * 2.0 - vec2<f32>(1.0, 1.0);
+    screenSpacePositionXY.y = -screenSpacePositionXY.y;
+    var screenSpacePosition:vec4<f32> = vec4<f32>(screenSpacePositionXY, depthValue, 1.0);
+    var worldSpacePosition:vec4<f32> = inverseViewProjectionMatrix * screenSpacePosition;
+    return vec3<f32>(worldSpacePosition.xyz / worldSpacePosition.www);
+  }
   `;
-  const createTextureList = (w, h) => [
-    swapChainFormat, // diffuse
-    GPUTextureFormat.rgba16float, // normal
-    GPUTextureFormat.rgba16float, // position
-    GPUTextureFormat.r32float // depth
-  ].map(format => {
-    return device.createTexture({
-      size: {
-        width: w,
-        height: h,
-        depthOrArrayLayers: 1
-      },
-      mipLevelCount: 1,
-      sampleCount: 1,
-      dimension: GPUTextureDimension.texture_2d,
-      format,
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
-    });
+  const createTexture = (format, w, h) => device.createTexture({
+    size: {
+      width: w,
+      height: h,
+      depthOrArrayLayers: 1
+    },
+    mipLevelCount: 1,
+    sampleCount: 1,
+    dimension: GPUTextureDimension.texture_2d,
+    format,
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING
   });
 
-  const textureList = createTextureList(width, height);
+  const diffuseTexture = {
+    texture: undefined,
+    view: undefined
+  };
+  const normalTexture = {
+    texture: undefined,
+    view: undefined
+  };
+  const depthTexture = {
+    texture: undefined,
+    view: undefined
+  };
+  const resizeTexture = (targetTexture, format, w, h) => {
+    if (targetTexture.texture) {
+      targetTexture.texture.destroy();
+    }
+    targetTexture.texture = createTexture(format, w, h);
+    targetTexture.view = targetTexture.texture.createView();
+  }
+  const resize = (w, h) => {
+    resizeTexture(diffuseTexture, swapChainFormat, w, h);
+    resizeTexture(normalTexture, GPUTextureFormat.rgba16float, w, h);
+    resizeTexture(depthTexture, GPUTextureFormat.depth24plus, w, h);
+  };
+  resize(width, height);
 
   const filteringSampler = device.createSampler({
     magFilter: GPUFilterMode.linear,
@@ -568,22 +594,33 @@ async function createRenderTarget(device, swapChainFormat, width, height) {
         visibility: GPUShaderStage.FRAGMENT,
         sampler: {type: GPUSamplerBindingType.non_filtering}
       },
-      ...[
-        GPUTextureSampleType.float, // diffuse
-        GPUTextureSampleType.float, // normal
-        GPUTextureSampleType.float, // position
-        GPUTextureSampleType.unfilterable_float // depth
-      ].map((sampleType, index) => {
-        return {
-          binding: index + 2,
-          visibility: GPUShaderStage.FRAGMENT,
-          texture: {
-            sampleType,
-            viewDimension: GPUTextureViewDimension.texture_2d,
-            multisampled: false
-          }
+      {
+        binding: 2,
+        visibility: GPUShaderStage.FRAGMENT,
+        texture: {
+          sampleType: GPUTextureSampleType.float, // diffuse
+          viewDimension: GPUTextureViewDimension.texture_2d,
+          multisampled: false
         }
-      })
+      },
+      {
+        binding: 3,
+        visibility: GPUShaderStage.FRAGMENT,
+        texture: {
+          sampleType: GPUTextureSampleType.float, // normal
+          viewDimension: GPUTextureViewDimension.texture_2d,
+          multisampled: false
+        }
+      },
+      {
+        binding: 4,
+        visibility: GPUShaderStage.FRAGMENT,
+        texture: {
+          sampleType: GPUTextureSampleType.unfilterable_float, // depth
+          viewDimension: GPUTextureViewDimension.texture_2d,
+          multisampled: false
+        }
+      },
     ]
   });
 
@@ -598,30 +635,31 @@ async function createRenderTarget(device, swapChainFormat, width, height) {
         binding: 1,
         resource: nonFilteringSampler
       },
-      ...textureList.map((texture, index) => {
-        return {
-          binding: index + 2,
-          resource: texture.createView()
-        };
-      })
+      {
+        binding: 2,
+        resource: diffuseTexture.view
+      },
+      {
+        binding: 3,
+        resource: normalTexture.view
+      },
+      {
+        binding: 4,
+        resource: depthTexture.view
+      },
     ]
   });
   const uniformBindGroup = createUniformBindGroup();
 
-  const resizeTextureList = (w, h) => {
-    textureList.forEach(texture => texture.destroy());
-    createTextureList(w, h).forEach((texture, i) => {
-      textureList[i] = texture;
-    });
-  };
-
   return {
     getShader,
-    textureList,
+    diffuseTexture,
+    normalTexture,
+    depthTexture,
     uniformBindGroup,
     uniformsBindGroupLayout,
-    resizeTextureList,
-    createUniformBindGroup
+    resize,
+    createUniformBindGroup,
   };
 }
 
@@ -669,7 +707,7 @@ async function createCommonUniforms(device) {
   };
 }
 
-async function createGeometryPass(device, swapChainFormat, width, height, renderTargetTextureList, commonUniforms) {
+async function createGeometryPass(device, swapChainFormat, width, height, renderTarget, commonUniforms) {
   // language=WGSL
   const vertexShaderWGSL = `
   ${commonUniforms.getShader(0, "commonUniforms")}
@@ -683,9 +721,7 @@ async function createGeometryPass(device, swapChainFormat, width, height, render
   struct VertexOutput {
     @builtin(position) position : vec4<f32>,
     @location(0) vColor : vec4<f32>,
-    @location(1) vNormal : vec3<f32>,
-    @location(2) vPosition : vec4<f32>,
-    @location(3) vDepth : vec2<f32>
+    @location(1) vNormal : vec3<f32>
   };
 
   fn inverse3x3(m33:mat3x3<f32>) -> mat3x3<f32> {
@@ -720,9 +756,7 @@ async function createGeometryPass(device, swapChainFormat, width, height, render
     );
     output.vColor = modelUniforms.color;
     output.vNormal = normal * inverse3x3(nMatrix);
-    output.vPosition = modelUniforms.mMatrix * vec4<f32>(position, 1.0);
-    output.position = commonUniforms.vpMatrix * output.vPosition;
-    output.vDepth = output.position.zw;
+    output.position = commonUniforms.vpMatrix * modelUniforms.mMatrix * vec4<f32>(position, 1.0);
     return output;
   }
   `;
@@ -738,23 +772,17 @@ async function createGeometryPass(device, swapChainFormat, width, height, render
   const fragmentShaderWGSL = `
   struct FragmentOutput {
     @location(0) outDiffuse: vec4<f32>,
-    @location(1) outNormal: vec4<f32>,
-    @location(2) outPosition: vec4<f32>,
-    @location(3) outDepth: vec4<f32>
+    @location(1) outNormal: vec4<f32>
   };
 
   @fragment
   fn main(
     @location(0) vColor: vec4<f32>,
     @location(1) vNormal: vec3<f32>,
-    @location(2) vPosition: vec4<f32>,
-    @location(3) vDepth: vec2<f32>,
   ) -> FragmentOutput {
     var output : FragmentOutput;
     output.outDiffuse = vColor;
     output.outNormal = vec4<f32>(normalize(vNormal), 1.0);
-    output.outPosition = vPosition;
-    output.outDepth = vec4<f32>(vDepth.x / vDepth.y, 0.0, 0.0, 0.0);
     return output;
   }
   `;
@@ -823,8 +851,6 @@ async function createGeometryPass(device, swapChainFormat, width, height, render
       targets: [
         {format: swapChainFormat, blend: defaultBlending}, // diffuse
         {format: GPUTextureFormat.rgba16float, blend: defaultBlending}, // normal
-        {format: GPUTextureFormat.rgba16float, blend: defaultBlending}, // position
-        {format: GPUTextureFormat.r32float} // depth
       ].map(({format, blend}) => {
         return {
           format,
@@ -860,37 +886,34 @@ async function createGeometryPass(device, swapChainFormat, width, height, render
     usage: GPUTextureUsage.RENDER_ATTACHMENT
   });
 
-  let depthTexture = createDepthTexture(width, height);
   const renderPassDescriptor = {
-    colorAttachments: renderTargetTextureList.map((renderTargetTexture, index) => {
-      return {
-        // set initial r value to 1.0 for 4th texture(depth)
-        clearValue: {r: index === 3 ? 1.0 : 0.0, g: 0.0, b: 0.0, a: 1.0},
+    colorAttachments: [
+      {
+        clearValue: {r: 0.0, g: 0.0, b: 0.0, a: 1.0},
         loadOp: GPULoadOp.clear,
         storeOp: GPUStoreOp.store,
-        view: renderTargetTexture.createView(),
-      };
-    }),
+        view: renderTarget.diffuseTexture.view,
+      },
+      {
+        clearValue: {r: 0.0, g: 0.0, b: 0.0, a: 1.0},
+        loadOp: GPULoadOp.clear,
+        storeOp: GPUStoreOp.store,
+        view: renderTarget.normalTexture.view,
+      }
+    ],
 
     depthStencilAttachment: {
-      view: depthTexture.createView(),
+      view: renderTarget.depthTexture.view,
       depthClearValue: 1.0,
       depthLoadOp: GPULoadOp.clear,
       depthStoreOp: GPUStoreOp.store,
     }
   };
 
-  const resizeDepthTexture = (w, h) => {
-    depthTexture.destroy();
-    depthTexture = createDepthTexture(w, h);
-    renderPassDescriptor.depthStencilAttachment.view = depthTexture.createView();
-  };
-
   return {
     modelUniformsBindGroupLayout,
     pipeline,
-    renderPassDescriptor,
-    resizeDepthTexture
+    renderPassDescriptor
   };
 }
 
@@ -949,18 +972,6 @@ async function createRenderGBufferPass(device, swapChainFormat, renderTarget, co
   ${renderTarget.getShader(0)}
   ${commonUniforms.getShader(1, "commonUniforms")}
 
-  fn reconstructWorldSpacePositionFromDepth(
-    depthValue: f32,
-    uv: vec2<f32>,
-    inverseViewProjectionMatrix: mat4x4<f32>
-  ) -> vec3<f32> {
-    var screenSpacePositionXY:vec2<f32> = uv * 2.0 - vec2<f32>(1.0, 1.0);
-    screenSpacePositionXY.y = -screenSpacePositionXY.y;
-    var screenSpacePosition:vec4<f32> = vec4<f32>(screenSpacePositionXY, depthValue, 1.0);
-    var worldSpacePosition:vec4<f32> = inverseViewProjectionMatrix * screenSpacePosition;
-    return vec3<f32>(worldSpacePosition.xyz / vec3<f32>(worldSpacePosition.www));
-  }
-
   @fragment
   fn main(
     @location(0) vUV: vec2<f32>
@@ -979,17 +990,12 @@ async function createRenderGBufferPass(device, swapChainFormat, renderTarget, co
     tmpTexture = textureSample(normalTexture, filteringSampler, uv);
     if (vUV.x >= 0.5 && vUV.y < 0.5){
       normalColor = vec4<f32>((tmpTexture.xyz + vec3<f32>(1.0, 1.0, 1.0)) * 0.5, tmpTexture.w);
-
-      //  var depthValue:f32 = textureSample(depthTexture, nonFilteringSampler, uv).x;
-      //  if (depthValue != 1.0){
-      //    normalColor = vec4<f32>(reconstructWorldSpacePositionFromDepth(depthValue, uv, commonUniforms.inverseVPMatrix), normalColor.w);
-      //  }
-      //  normalColor = vec4<f32>((normalColor.xyz + vec3<f32>(4.0, 4.0, 4.0)) * 0.125, 1.0);
     }
 
     var positionColor:vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     uv = vUV * 2.0;
-    var depthValue:f32 = textureSample(depthTexture, nonFilteringSampler, uv).x;
+//    var depthValue:f32 = textureSample(depthTexture, nonFilteringSampler, uv).x;
+    var depthValue:f32 = textureSample(depthTexture, nonFilteringSampler, uv).r;
     //  positionColor = textureSample(positionTexture, filteringSampler, uv);
     if (vUV.x < 0.5 && vUV.y < 0.5){
       if (depthValue != 1.0){
@@ -1000,13 +1006,12 @@ async function createRenderGBufferPass(device, swapChainFormat, renderTarget, co
 
     var depthColor:vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     uv = vUV * 2.0 + vec2<f32>(-1.0, -1.0);
-    tmpTexture = textureSample(depthTexture, nonFilteringSampler, uv);
+    depthValue = textureSample(depthTexture, nonFilteringSampler, uv).r;
     if (vUV.x >= 0.5 && vUV.y >= 0.5){
-      var showDepthValue = tmpTexture.x;
-      if(showDepthValue == 1.0){
-        showDepthValue = 0.0;
+      if(depthValue == 1.0){
+        depthValue = 0.0;
       }
-      depthColor = vec4<f32>(vec3<f32>(showDepthValue), 1.0);
+      depthColor = vec4<f32>(vec3<f32>(depthValue), 1.0);
     }
 
     return diffuseColor + normalColor + positionColor + depthColor;
@@ -1260,20 +1265,7 @@ async function createPointLightingPass(device, swapChainFormat, commonUniforms, 
   const fragmentShaderWGSL = `
   ${commonUniforms.getShader(0, "commonUniforms")}
   ${pointLightUniformsShader}
-
   ${renderTarget.getShader(2, "commonUniforms")}
-
-  fn reconstructWorldSpacePositionFromDepth(
-    depthValue: f32,
-    uv: vec2<f32>,
-    inverseViewProjectionMatrix: mat4x4<f32>
-  ) -> vec3<f32> {
-    var screenSpacePositionXY:vec2<f32> = uv * 2.0 - vec2<f32>(1.0, 1.0);
-    screenSpacePositionXY.y = -screenSpacePositionXY.y;
-    var screenSpacePosition:vec4<f32> = vec4<f32>(screenSpacePositionXY, depthValue, 1.0);
-    var worldSpacePosition:vec4<f32> = inverseViewProjectionMatrix * screenSpacePosition;
-    return vec3<f32>(worldSpacePosition.xyz / worldSpacePosition.www);
-  }
 
   @fragment
   fn main(
@@ -1281,7 +1273,7 @@ async function createPointLightingPass(device, swapChainFormat, commonUniforms, 
   ) -> @location(0) vec4<f32> {
     var uv:vec2<f32> = fragCoord.xy * commonUniforms.screen.zw;
     //  var pos:vec3<f32> = textureSample(positionTexture, filteringSampler, uv).xyz;
-    var depthValue:f32 = textureSample(depthTexture, nonFilteringSampler, uv).x;
+    var depthValue:f32 = textureSample(depthTexture, nonFilteringSampler, uv).r;
     var pos:vec3<f32> = reconstructWorldSpacePositionFromDepth(depthValue, uv, commonUniforms.inverseVPMatrix);
     var normal:vec3<f32> = normalize(textureSample(normalTexture, filteringSampler, uv).xyz);
     var diffuseColor:vec4<f32> = textureSample(diffuseTexture, filteringSampler, uv);
@@ -1465,7 +1457,7 @@ async function createLightHelperPass(device, swapChainFormat, depthTexture, comm
       },
       {
         binding: 1,
-        resource: depthTexture.createView()
+        resource: depthTexture.view
       }
     ]
   });
