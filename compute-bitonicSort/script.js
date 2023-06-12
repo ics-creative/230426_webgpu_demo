@@ -178,7 +178,7 @@ const computeGPU = async (arr) => {
 
   // get result
   await readbackBuffer.mapReadAsync();
-  log(`GGPUでの実行時間: ${Math.round(performance.now() - now)} ms`);
+  log(`GPUでの実行時間: ${Math.round(performance.now() - now)} ms`);
   log(`ソート結果の正当性チェック: ${validateSorted(result) ? '成功' : '失敗'}`);
 
   storageBuffer.destroy();
